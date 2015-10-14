@@ -383,7 +383,7 @@ void Extruder::on_gcode_received(void *argument)
 
         } else if (gcode->m == 209 && ( (this->enabled && !gcode->has_letter('P')) || (gcode->has_letter('P') && gcode->get_value('P') == this->identifier)) ) {
         	if(gcode->has_letter('F')) {
-        		this->pa_fudge = gcode->get_value('F');
+        		this->pa_fudge = gcode->get_value('F') / 1.0F;
         	}
         	gcode->stream->printf("Pressure advance fudge factor at F%0.2f\n", this->pa_fudge);
         } else if (gcode->m == 221 && this->enabled) { // M221 S100 change flow rate by percentage
@@ -712,38 +712,23 @@ void Extruder::on_speed_change( void *argument )
 
     // access the stepper
     Stepper *stp = static_cast<Stepper *>(argument);
-    const Block *blk= stp->get_current_block();
-
-    // see if accelerating or decelerating and where we are on the trapezoid
-    // FIXME need to optimize this as time critical section
-    bool accelerating= false;
-    bool decelerating= false;
-    float pc= 0.0F; // where on the curve we are 0 not started 1.0 finished
-    if(stp->get_steps_completed() <= blk->accelerate_until) {
-        accelerating= true;
-        
-        if(abs(stp->get_steps_completed()) !=0 && abs(blk->accelerate_until) !=0){
-        	pc= (float)stp->get_steps_completed() / (float)blk->accelerate_until;
-        }
-    }else if(stp->get_steps_completed() > blk->decelerate_after) {
-        decelerating= true;
-        if((abs(stp->get_steps_completed() - blk->decelerate_after)) !=0 && abs(blk->steps_event_count - blk->accelerate_until) !=0){
-       		pc= ((float)stp->get_steps_completed() - (float)blk->decelerate_after) / ((float)blk->steps_event_count - (float)blk->accelerate_until);
-        }  
-    }else{
-    	//Cruising, set multiplier JIC 
-        this->pa_multiplier = 1.0;
+    
+    if(stp){
+    	const Block *blk= stp->get_current_block();
+	    // see if accelerating or decelerating and where we are on the trapezoid
+	    if(blk){
+		    if(stp->get_steps_completed() <= blk->accelerate_until) {
+		        //Accelerating
+		        this->pa_multiplier = 1.0 + this->pa_fudge;
+		    }else if(stp->get_steps_completed() > blk->decelerate_after) {
+		       //Decelerating
+		        this->pa_multiplier = 1.0 - this->pa_fudge;
+		    }else{
+		    	//Cruising, set multiplier JIC 
+		        this->pa_multiplier = 1.0;
+		    }    
+	    }
     }
-
-    //Pressure advance based on fudge
-    if(accelerating) {
-        this->pa_multiplier = (1.0 + this->pa_fudge) - (this->pa_fudge * pc);
-    }else if(decelerating) {
-        this->pa_multiplier = 1.0 - (this->pa_fudge * pc);
-    }else{
-    	this->pa_multiplier = 1.0;
-    }
-
 
     /*
     * nominal block duration = current block's steps / ( current block's nominal rate )
