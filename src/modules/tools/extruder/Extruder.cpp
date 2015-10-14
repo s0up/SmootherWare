@@ -721,13 +721,15 @@ void Extruder::on_speed_change( void *argument )
     float pc= 0.0F; // where on the curve we are 0 not started 1.0 finished
     if(stp->get_steps_completed() <= blk->accelerate_until) {
         accelerating= true;
-        pc= stp->get_steps_completed() / blk->accelerate_until;
-
+        
+        if(abs(stp->get_steps_completed()) !=0 && abs(blk->accelerate_until) !=0){
+        	pc= (float)stp->get_steps_completed() / (float)blk->accelerate_until;
+        }
     }else if(stp->get_steps_completed() > blk->decelerate_after) {
         decelerating= true;
-        // FIXME need to guard against divide by zero
-        pc= (stp->get_steps_completed() - blk->decelerate_after) / (blk->steps_event_count - blk->accelerate_until);
-
+        if((abs(stp->get_steps_completed() - blk->decelerate_after)) !=0 && abs(blk->steps_event_count - blk->accelerate_until) !=0){
+       		pc= ((float)stp->get_steps_completed() - (float)blk->decelerate_after) / ((float)blk->steps_event_count - (float)blk->accelerate_until);
+        }  
     }else{
     	//Cruising, set multiplier JIC 
         this->pa_multiplier = 1.0;
@@ -752,7 +754,7 @@ void Extruder::on_speed_change( void *argument )
     * or even : ( stepper steps per second ) * ( extruder steps / current block's steps )
     */
 
-    this->stepper_motor->set_speed((THEKERNEL->stepper->get_trapezoid_adjusted_rate() * (float)this->stepper_motor->get_steps_to_move() / (float)this->current_block->steps_event_count) * this->pa_multiplier);
+    this->stepper_motor->set_speed((THEKERNEL->stepper->get_trapezoid_adjusted_rate() * (float)this->stepper_motor->get_steps_to_move() / (float)this->current_block->steps_event_count) * (float)this->pa_multiplier);
 }
 
 // When the stepper has finished it's move
