@@ -643,7 +643,7 @@ void Extruder::on_block_begin(void *argument)
         this->stepper_motor->move( (this->travel_distance > 0), steps_to_step);
 
         if(this->mode == FOLLOW) {
-            on_speed_change(this); // set initial speed
+            on_speed_change((void*)1); // set initial speed
             this->stepper_motor->set_moved_last_block(true);
         } else {
             // SOLO
@@ -696,6 +696,8 @@ void Extruder::acceleration_tick(void)
 // Speed has been updated for the robot's stepper, we must update accordingly
 void Extruder::on_speed_change( void *argument )
 {
+	int argument_val = (int) argument;
+	
     // Avoid trying to work when we really shouldn't ( between blocks or re-entry )
     if(!this->enabled || this->current_block == NULL ||  this->paused || this->mode != FOLLOW || !this->stepper_motor->is_moving()) {
         return;
@@ -713,7 +715,7 @@ void Extruder::on_speed_change( void *argument )
     // access the stepper
     Stepper *stp = static_cast<Stepper *>(argument);
     
-    if(stp){
+    if(stp && argument_val != 1 && this->pa_fudge > 0.0F){
     	const Block *blk= stp->get_current_block();
 	    // see if accelerating or decelerating and where we are on the trapezoid
 	    if(blk){
