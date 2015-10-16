@@ -78,7 +78,8 @@ class Extruder : public Tool {
         
         // for pressure advance
         float pa_multiplier;
-        float pa_fudge;
+        float pa_accel_fudge;
+        float pa_decel_fudge;
 
         struct {
             char mode:3;        // extruder motion mode,  OFF, SOLO, or FOLLOW

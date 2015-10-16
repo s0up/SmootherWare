@@ -93,7 +93,8 @@ Extruder::Extruder( uint16_t config_identifier, bool single )
     this->max_volumetric_rate = 0;
     
     //Pressure advance vars
-    this->pa_fudge = 0.2F;
+    this->pa_accel_fudge = 0.1F;
+    this->pa_decel_fudge = 0.2F;
     this->pa_multiplier = 1.0F;
 
     memset(this->offset, 0, sizeof(this->offset));
@@ -382,10 +383,12 @@ void Extruder::on_gcode_received(void *argument)
             if(gcode->has_letter('F')) retract_recover_feedrate = gcode->get_value('F') / 60.0F; // specified in mm/min converted to mm/sec
 
         } else if (gcode->m == 209 && ( (this->enabled && !gcode->has_letter('P')) || (gcode->has_letter('P') && gcode->get_value('P') == this->identifier)) ) {
-        	if(gcode->has_letter('F')) {
-        		this->pa_fudge = gcode->get_value('F') / 1.0F;
+        	if(gcode->has_letter('A')) {
+        		this->pa_accel_fudge = gcode->get_value('A') / 1.0F;
+        	}else if(gcode->has_letter('D')) {
+        		this->pa_decel_fudge = gcode->get_value('D') / 1.0F;
         	}
-        	gcode->stream->printf("Pressure advance fudge factor at F%0.2f\n", this->pa_fudge);
+        	
         } else if (gcode->m == 221 && this->enabled) { // M221 S100 change flow rate by percentage
             if(gcode->has_letter('S')) {
                 this->extruder_multiplier = gcode->get_value('S') / 100.0F;
@@ -401,6 +404,7 @@ void Extruder::on_gcode_received(void *argument)
                 gcode->stream->printf(";E retract recover length, feedrate:\nM208 S%1.4f F%1.4f\n", this->retract_recover_length, this->retract_recover_feedrate * 60.0F);
                 gcode->stream->printf(";E acceleration mm/sec²:\nM204 E%1.4f\n", this->acceleration);
                 gcode->stream->printf(";E max feed rate mm/sec:\nM203 E%1.4f\n", this->stepper_motor->get_max_rate());
+                gcode->stream->printf(";E pressure advance fudge:\nM209 A%1.4f D%1.4f\n", this->pa_accel_fudge, this->pa_decel_fudge);
                 if(this->max_volumetric_rate > 0) {
                     gcode->stream->printf(";E max volumetric rate mm³/sec:\nM203 V%1.4f\n", this->max_volumetric_rate);
                 }
@@ -412,6 +416,7 @@ void Extruder::on_gcode_received(void *argument)
                 gcode->stream->printf(";E retract recover length, feedrate:\nM208 S%1.4f F%1.4f P%d\n", this->retract_recover_length, this->retract_recover_feedrate * 60.0F, this->identifier);
                 gcode->stream->printf(";E acceleration mm/sec²:\nM204 E%1.4f P%d\n", this->acceleration, this->identifier);
                 gcode->stream->printf(";E max feed rate mm/sec:\nM203 E%1.4f P%d\n", this->stepper_motor->get_max_rate(), this->identifier);
+                gcode->stream->printf(";E pressure advance fudge:\nM209 A%1.4f D%1.4f\n", this->pa_accel_fudge, this->pa_decel_fudge, this->identifier);
                 if(this->max_volumetric_rate > 0) {
                     gcode->stream->printf(";E max volumetric rate mm³/sec:\nM203 V%1.4f P%d\n", this->max_volumetric_rate, this->identifier);
                 }
@@ -696,7 +701,7 @@ void Extruder::acceleration_tick(void)
 // Speed has been updated for the robot's stepper, we must update accordingly
 void Extruder::on_speed_change( void *argument )
 {
-	int argument_val = (int) argument;
+	int argument_val = (int) argument; //Clone in RAM to avoid comparing int to pointer, probably could be done more intelligently
 	
     // Avoid trying to work when we really shouldn't ( between blocks or re-entry )
     if(!this->enabled || this->current_block == NULL ||  this->paused || this->mode != FOLLOW || !this->stepper_motor->is_moving()) {
@@ -713,23 +718,43 @@ void Extruder::on_speed_change( void *argument )
     }
 
     // access the stepper
+	float pc= 0.0F; // where on the curve we are 0 not started 1.0 finished
+	bool pa_enable = true;
+	
     Stepper *stp = static_cast<Stepper *>(argument);
     
-    if(stp && argument_val != 1 && this->pa_fudge > 0.0F){
+    
+    if(stp && argument_val != 1){
     	const Block *blk= stp->get_current_block();
+    	
+	    //Sanity check for PA
+	    if(stp->get_steps_completed() == 0){
+	    	pa_enable = false;
+	    }else if (blk->accelerate_until == 0){
+	    	pa_enable = false;
+	    }else if ((stp->get_steps_completed() - blk->decelerate_after) == 0){
+	    	pa_enable = false;
+	    }else if((blk->steps_event_count - blk->accelerate_until) == 0){
+	    	pa_enable = false;
+	    }
+    	
 	    // see if accelerating or decelerating and where we are on the trapezoid
-	    if(blk){
-		    if(stp->get_steps_completed() <= blk->accelerate_until) {
+		if(blk && pa_enable == true){
+			if(stp->get_steps_completed() <= blk->accelerate_until) {
 		        //Accelerating
-		        this->pa_multiplier = 1.0 + this->pa_fudge;
+		        pc= stp->get_steps_completed() / blk->accelerate_until;
+		        this->pa_multiplier = 1.0 + this->pa_accel_fudge;
 		    }else if(stp->get_steps_completed() > blk->decelerate_after) {
 		       //Decelerating
-		        this->pa_multiplier = 1.0 - this->pa_fudge;
+				pc= ((float)stp->get_steps_completed() - (float)blk->decelerate_after) / ((float)blk->steps_event_count - (float)blk->accelerate_until);
+		        this->pa_multiplier = 1.0 - this->pa_decel_fudge;
 		    }else{
 		    	//Cruising, set multiplier JIC 
 		        this->pa_multiplier = 1.0;
 		    }    
 	    }
+    }else{
+    	this->pa_multiplier = 1.0;
     }
 
     /*
