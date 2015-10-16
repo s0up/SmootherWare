@@ -740,11 +740,11 @@ void Extruder::on_speed_change( void *argument )
     	
 	    // see if accelerating or decelerating and where we are on the trapezoid
 		if(blk && pa_enable == true){
-			if(stp->get_steps_completed() <= blk->accelerate_until) {
+			if(stp->get_steps_completed() <= blk->accelerate_until && this->pa_accel_fudge > 0.0F) {
 		        //Accelerating
 		        pc= stp->get_steps_completed() / blk->accelerate_until;
 		        this->pa_multiplier = 1.0 + this->pa_accel_fudge;
-		    }else if(stp->get_steps_completed() > blk->decelerate_after) {
+		    }else if(stp->get_steps_completed() > blk->decelerate_after && this->pa_decel_fudge > 0.0F) {
 		       //Decelerating
 				pc= ((float)stp->get_steps_completed() - (float)blk->decelerate_after) / ((float)blk->steps_event_count - (float)blk->accelerate_until);
 		        this->pa_multiplier = 1.0 - this->pa_decel_fudge;
